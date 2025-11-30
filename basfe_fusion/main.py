@@ -1,10 +1,15 @@
 import os
 import sys
 import json
+import time
 import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None  # Progress disabled if tqdm missing
 
 # Support running as a script (no package parent) by fixing sys.path
 if __package__ is None or __package__ == "":
@@ -83,7 +88,11 @@ def train(args):
     hsi_bands = None
     msi_bands = None
 
-    for s in scenes[: args.max_scenes or len(scenes)]:
+    scene_subset = scenes[: args.max_scenes or len(scenes)]
+    if (not args.quiet and tqdm) or (args.show_progress and tqdm):
+        print(f"Building training patches (hrsize={hrsize}, stride={stride}) from {len(scene_subset)} scene(s)...")
+    loop = tqdm(scene_subset, desc="Train scenes", unit="scene") if ((not args.quiet and tqdm) or (args.show_progress and tqdm)) else scene_subset
+    for s in loop:
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
         if hsi_bands is None:
             hsi_bands = hrhsi.shape[2]
@@ -105,8 +114,16 @@ def train(args):
         os.makedirs(args.save_dir, exist_ok=True)
         model.save(os.path.join(args.save_dir, "model_untrained.keras"))
 
-    # Newer Keras prefers positional inputs/targets over dicts for performance and clarity
-    model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=1 if not args.quiet else 0)
+    class EpochTiming(keras.callbacks.Callback):
+        def on_epoch_begin(self, epoch, logs=None):
+            self._start = time.time()
+        def on_epoch_end(self, epoch, logs=None):
+            dur = time.time() - getattr(self, '_start', time.time())
+            print(f"Epoch {epoch+1}/{args.epochs} time: {dur:.2f}s")
+
+    callbacks = [EpochTiming()]
+    verbose = 1 if (not args.quiet or args.show_progress) else 0
+    model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=verbose, callbacks=callbacks)
 
     if args.save_dir:
         model.save(os.path.join(args.save_dir, "model_trained.keras"))
@@ -128,32 +145,36 @@ def reconstruct(args):
     out_dir = args.out_dir or os.path.join(args.root_dir, "results")
     os.makedirs(out_dir, exist_ok=True)
 
-    for idx, s in enumerate(scenes[: args.max_scenes or len(scenes)]):
+    test_subset = scenes[: args.max_scenes or len(scenes)]
+    outer = tqdm(test_subset, desc="Reconstruct scenes", unit="scene") if ((not args.quiet and tqdm) or (args.show_progress and tqdm)) else test_subset
+    for idx, s in enumerate(outer):
+        scene_start = time.time()
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
         H, W, L = hrhsi.shape
         ii, jj = tile_indices(H, W, hrsize, edge)
         num = ii.size * jj.size
         mrdatainput = np.zeros((num, hrsize, hrsize, hrmsi.shape[2]), dtype=np.float32)
         lrdatainput = np.zeros((num, hrsize, hrsize, hrhsi.shape[2]), dtype=np.float32)
+        patch_coords = [(i, j) for i in ii for j in jj]
+        inner = tqdm(patch_coords, desc=f"Scene {idx+1} patches", unit="patch") if ((not args.quiet and tqdm) or (args.show_progress and tqdm)) else patch_coords
         c = 0
-        for i in ii:
-            for j in jj:
-                mrdatainput[c] = hrmsi[i : i + hrsize, j : j + hrsize]
-                lrdatainput[c] = lrhsi_up[i : i + hrsize, j : j + hrsize]
-                c += 1
+        for (i, j) in inner:
+            mrdatainput[c] = hrmsi[i : i + hrsize, j : j + hrsize]
+            lrdatainput[c] = lrhsi_up[i : i + hrsize, j : j + hrsize]
+            c += 1
         pred = model.predict([mrdatainput, lrdatainput], verbose=0)
         reconst = np.zeros_like(hrhsi)
         c = 0
-        for i in ii:
-            for j in jj:
-                reconst[i : i + hrsize, j : j + hrsize] = pred[c]
-                c += 1
+        for (i, j) in patch_coords:
+            reconst[i : i + hrsize, j : j + hrsize] = pred[c]
+            c += 1
         c = 0
-        for i in ii:
-            for j in jj:
-                reconst[i + edge : i + hrsize - edge, j + edge : j + hrsize - edge] = pred[c, edge:-edge, edge:-edge]
-                c += 1
+        for (i, j) in patch_coords:
+            reconst[i + edge : i + hrsize - edge, j + edge : j + hrsize - edge] = pred[c, edge:-edge, edge:-edge]
+            c += 1
         mat_save(os.path.join(out_dir, f"reconst_{idx+1}.mat"), "reconst", reconst)
+        if not args.quiet:
+            print(f"Scene {idx+1} time: {time.time()-scene_start:.2f}s")
 
 
 def compute_metrics(args):
@@ -232,6 +253,7 @@ def build_arg_parser():
     common.add_argument("--edge", type=int, default=2)
     common.add_argument("--scale", type=int, default=4)
     common.add_argument("--quiet", action="store_true")
+    common.add_argument("--show-progress", action="store_true", help="Show tqdm progress bars & epoch timings even if quiet")
     common.add_argument("--gpus", type=int, default=1, help="Number of GPUs to use (>=1)")
     common.add_argument("--max-scenes", type=int, default=0, help="0 = all scenes")
 
