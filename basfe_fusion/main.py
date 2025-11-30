@@ -1,14 +1,25 @@
 import os
+import sys
 import json
 import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from .dataset import discover_scene_paths, load_scene, extract_patches, tile_indices
-from .model import build_basfe_model
-from .io_utils import mat_save
-from .metrics import rmse_psnr, sam, ergas, mssim_cc
+# Support running as a script (no package parent) by fixing sys.path
+if __package__ is None or __package__ == "":
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if pkg_root not in sys.path:
+        sys.path.insert(0, pkg_root)
+    from basfe_fusion.dataset import discover_scene_paths, load_scene, extract_patches, tile_indices
+    from basfe_fusion.model import build_basfe_model
+    from basfe_fusion.io_utils import mat_save
+    from basfe_fusion.metrics import rmse_psnr, sam, ergas, mssim_cc
+else:
+    from .dataset import discover_scene_paths, load_scene, extract_patches, tile_indices
+    from .model import build_basfe_model
+    from .io_utils import mat_save
+    from .metrics import rmse_psnr, sam, ergas, mssim_cc
 
 
 def enable_quiet_logs():
