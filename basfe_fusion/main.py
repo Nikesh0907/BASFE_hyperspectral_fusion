@@ -162,6 +162,7 @@ def compute_metrics(args):
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
 
+    # Training uses the CLI-provided patch size
     hrsize = args.hrsize
     edge = args.edge
     scale = args.scale
