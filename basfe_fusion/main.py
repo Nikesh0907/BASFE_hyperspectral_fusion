@@ -49,10 +49,31 @@ def train(args):
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
 
     # Ensure patch size matches the trained model
-    try:
-        hrsize = int(model.inputs[0].shape[1])
-    except Exception:
-        hrsize = args.hrsize
+    # Try to infer patch size from the saved model input layers
+    def _infer_hrsize_from_model(m):
+        try:
+            li = m.get_layer('msi_input')
+            val = getattr(li, 'batch_input_shape', None)
+            if val and val[1]:
+                return int(val[1])
+        except Exception:
+            pass
+        try:
+            li = m.get_layer('lr_input')
+            val = getattr(li, 'batch_input_shape', None)
+            if val and val[1]:
+                return int(val[1])
+        except Exception:
+            pass
+        try:
+            s = m.inputs[0].shape[1]
+            if s:
+                return int(s)
+        except Exception:
+            pass
+        return None
+
+    hrsize = _infer_hrsize_from_model(model) or args.hrsize
     stride = args.stride
     scale = args.scale
 
@@ -99,10 +120,7 @@ def reconstruct(args):
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
 
-    try:
-        hrsize = int(model.inputs[0].shape[1])
-    except Exception:
-        hrsize = args.hrsize
+    hrsize = _infer_hrsize_from_model(model) or args.hrsize
     edge = args.edge
     scale = args.scale
 
