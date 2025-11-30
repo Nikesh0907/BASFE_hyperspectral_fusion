@@ -77,6 +77,11 @@ def train(args):
     scenes = discover_scene_paths(args.root_dir, "Train")
     if not scenes:
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
+    if getattr(args, 'list_scenes', False):
+        print(f"Discovered {len(scenes)} training scene pairs:")
+        for i, s in enumerate(scenes, 1):
+            print(f"{i:02d}: HSI={os.path.basename(s['hsi'])} RGB={os.path.basename(s['rgb'])}")
+        return
 
     hrsize = args.hrsize  # Always use provided patch size for training
     stride = args.stride
@@ -92,6 +97,7 @@ def train(args):
     if (not args.quiet and tqdm) or (args.show_progress and tqdm):
         print(f"Building training patches (hrsize={hrsize}, stride={stride}) from {len(scene_subset)} scene(s)...")
     loop = tqdm(scene_subset, desc="Train scenes", unit="scene") if ((not args.quiet and tqdm) or (args.show_progress and tqdm)) else scene_subset
+    patch_counts = []
     for s in loop:
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
         if hsi_bands is None:
@@ -102,6 +108,7 @@ def train(args):
         hr_list.append(h)
         lr_list.append(l)
         mr_list.append(m)
+        patch_counts.append(h.shape[0])
 
     hrdata = np.concatenate(hr_list, axis=0)
     lrdata = np.concatenate(lr_list, axis=0)
@@ -123,7 +130,9 @@ def train(args):
 
     callbacks = [EpochTiming()]
     verbose = 1 if (not args.quiet or args.show_progress) else 0
-    model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=verbose, callbacks=callbacks)
+    print(f"Training summary: scenes_used={len(scene_subset)} patches_per_scene={patch_counts} total_patches={hrdata.shape[0]}")
+    if args.epochs > 0:
+        model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=verbose, callbacks=callbacks)
 
     if args.save_dir:
         model.save(os.path.join(args.save_dir, "model_trained.keras"))
@@ -263,6 +272,7 @@ def build_arg_parser():
     pt.add_argument("--lr", type=float, default=1e-4)
     pt.add_argument("--num-filter", type=int, default=32)
     pt.add_argument("--save-dir", type=str, default="./_saved_models")
+    pt.add_argument("--list-scenes", action="store_true", help="List discovered training scenes and exit")
 
     pr = sub.add_parser("reconstruct", parents=[common])
     pr.add_argument("--model-path", type=str, required=True)
