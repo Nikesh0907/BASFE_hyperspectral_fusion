@@ -53,13 +53,16 @@ def compute_metrics(reconstructed, config, scale):
         return {}
     test_bases = config.get('TEST_BASENAMES')
     gt_map = {}
+    # Primary mapping: from Test.txt basenames
     if test_bases:
         for base in test_bases:
             cand = os.path.join(gt_dir_full, base + '.mat')
             if os.path.isfile(cand): gt_map[base]=cand
-    else:
+    # Fallback: list all mats if none matched
+    if not gt_map:
         for f in list_mats(gt_dir_full):
-            gt_map[os.path.splitext(os.path.basename(f))[0]] = f
+            name = os.path.splitext(os.path.basename(f))[0]
+            gt_map[name] = f
     results={}
     for scene in tqdm(reconstructed.keys(), desc='Metrics', leave=True):
         if scene in gt_map:
@@ -70,7 +73,21 @@ def compute_metrics(reconstructed, config, scale):
             gt_crop = gt_cube[:H,:W,:C]; pred_crop = reconstructed[scene][:H,:W,:C]
             results[scene] = _metrics(pred_crop, gt_crop, scale)
         else:
-            print(f'GT not found for scene {scene}')
+            # Try loose match (lowercase, replace spaces/underscores)
+            key_loose = scene.lower().replace(' ','_')
+            match = None
+            for k in gt_map.keys():
+                if k.lower().replace(' ','_') == key_loose:
+                    match = k; break
+            if match:
+                gt_cube,_ = load_first_cube(gt_map[match])
+                H = min(gt_cube.shape[0], reconstructed[scene].shape[0])
+                W = min(gt_cube.shape[1], reconstructed[scene].shape[1])
+                C = min(gt_cube.shape[2], reconstructed[scene].shape[2])
+                gt_crop = gt_cube[:H,:W,:C]; pred_crop = reconstructed[scene][:H,:W,:C]
+                results[scene] = _metrics(pred_crop, gt_crop, scale)
+            else:
+                print(f'GT not found for scene {scene}')
     if results:
         out_path = os.path.join(config['RESULTS_DIR'], 'metrics.json')
         os.makedirs(config['RESULTS_DIR'], exist_ok=True)

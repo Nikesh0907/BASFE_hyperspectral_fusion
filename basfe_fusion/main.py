@@ -36,11 +36,9 @@ def prepare(conf):
 
 
 def run(args):
-    # Optional noise suppression and XLA control
+    # Optional noise suppression
     if getattr(args, 'quiet', False):
         os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL','2')  # suppress INFO and WARNING
-    if getattr(args, 'disable_xla', False):
-        os.environ['TF_XLA_FLAGS'] = '--xla_disable_gpu'
     conf = cfg.load_config(force_fast=args.fast_test, root_dir=args.root_dir, use_gt=args.use_gt)
     if args.gt_dir:
         # Accept absolute or relative; if relative, assume under ROOT_DIR
@@ -100,7 +98,7 @@ def parse_args():
     p.add_argument('--epochs', type=int, default=None, help='Override number of training epochs')
     p.add_argument('--gt-dir', type=str, default=None, help='Override GT directory for metrics (absolute or relative)')
     p.add_argument('--quiet', action='store_true', help='Reduce TensorFlow/absl log verbosity')
-    p.add_argument('--disable-xla', action='store_true', help='Disable XLA to avoid slow operation alarms')
+    # Note: disabling XLA via env flags is brittle in some runners; omitted.
     return p.parse_args()
 
 if __name__ == '__main__':
