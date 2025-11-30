@@ -178,7 +178,7 @@ def build_arg_parser():
 
     pt = sub.add_parser("train", parents=[common])
     pt.add_argument("--epochs", type=int, default=1)
-    pt.add_argument("--batch-size", type=int, default=32)
+    pt.add_argument("--batch-size", type=int, default=16)
     pt.add_argument("--lr", type=float, default=1e-4)
     pt.add_argument("--num-filter", type=int, default=32)
     pt.add_argument("--save-dir", type=str, default="./_saved_models")
