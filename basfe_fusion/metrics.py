@@ -38,6 +38,10 @@ def _metrics(pred, gt, scale):
 
 
 def compute_metrics(reconstructed, config, scale):
+    # If real GT is not enabled but pseudo-GT is requested, compute that directly
+    if not config.get('USE_GT') and config.get('PSEUDO_GT_TEST_HSI'):
+        print('GT not enabled; using pseudo-GT (upsampled test LR-HSI).')
+        return _compute_pseudo_gt_metrics(reconstructed, config, scale)
     if not config.get('USE_GT'):
         print('GT not enabled; skipping metrics.')
         return {}
