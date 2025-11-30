@@ -48,7 +48,11 @@ def train(args):
     if not scenes:
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
 
-    hrsize = args.hrsize
+    # Ensure patch size matches the trained model
+    try:
+        hrsize = int(model.inputs[0].shape[1])
+    except Exception:
+        hrsize = args.hrsize
     stride = args.stride
     scale = args.scale
 
@@ -95,7 +99,10 @@ def reconstruct(args):
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
 
-    hrsize = args.hrsize
+    try:
+        hrsize = int(model.inputs[0].shape[1])
+    except Exception:
+        hrsize = args.hrsize
     edge = args.edge
     scale = args.scale
 
