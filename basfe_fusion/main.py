@@ -225,6 +225,17 @@ def train(args):
         callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5, patience=max(1, args.plateau_patience), min_lr=args.lr_min))
     if args.early_stopping:
         callbacks.append(keras.callbacks.EarlyStopping(monitor='loss', patience=max(1, args.es_patience), restore_best_weights=True))
+    if args.save_dir and args.checkpoint_every > 0:
+        class EpochCheckpoint(keras.callbacks.Callback):
+            def __init__(self, save_dir, every):
+                super().__init__()
+                self.save_dir = save_dir
+                self.every = every
+            def on_epoch_end(self, epoch, logs=None):
+                if (epoch + 1) % self.every == 0:
+                    fname = f"model_epoch_{epoch+1}.keras"
+                    self.model.save(os.path.join(self.save_dir, fname))
+        callbacks.append(EpochCheckpoint(args.save_dir, args.checkpoint_every))
     verbose = 1 if (not args.quiet or args.show_progress) else 0
     print(f"Training summary: scenes_used={len(scene_subset)} sampling={args.sampling} patches_per_scene={patch_counts} total_patches={hrdata.shape[0]}")
     if args.epochs > 0:
@@ -384,6 +395,7 @@ def build_arg_parser():
     pt.add_argument("--plateau-patience", type=int, default=5, help="Patience epochs for ReduceLROnPlateau")
     pt.add_argument("--early-stopping", action="store_true", help="Enable EarlyStopping on training loss")
     pt.add_argument("--es-patience", type=int, default=15, help="Patience epochs for EarlyStopping")
+    pt.add_argument("--checkpoint-every", type=int, default=0, help="Save model every N epochs (0=disabled)")
 
     pr = sub.add_parser("reconstruct", parents=[common])
     pr.add_argument("--model-path", type=str, required=True)
