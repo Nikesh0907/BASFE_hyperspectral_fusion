@@ -15,20 +15,24 @@ def enable_quiet_logs():
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 
-def configure_gpu():
+def configure_gpu(num_gpus: int):
     try:
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            # Use only the first GPU to reduce memory pressure
-            tf.config.set_visible_devices(gpus[0], 'GPU')
-            tf.config.experimental.set_memory_growth(gpus[0], True)
+        all_gpus = tf.config.list_physical_devices('GPU')
+        if all_gpus:
+            use = all_gpus[: max(1, min(num_gpus, len(all_gpus)))]
+            tf.config.set_visible_devices(use, 'GPU')
+            for d in use:
+                try:
+                    tf.config.experimental.set_memory_growth(d, True)
+                except Exception:
+                    pass
     except Exception:
         pass
 
 
 def train(args):
     enable_quiet_logs()
-    configure_gpu()
+    configure_gpu(args.gpus)
     scenes = discover_scene_paths(args.root_dir, "Train")
     if not scenes:
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
@@ -73,7 +77,7 @@ def train(args):
 
 def reconstruct(args):
     enable_quiet_logs()
-    configure_gpu()
+    configure_gpu(args.gpus)
     model = keras.models.load_model(args.model_path)
     scenes = discover_scene_paths(args.root_dir, "Test")
     if not scenes:
@@ -116,7 +120,7 @@ def reconstruct(args):
 
 def compute_metrics(args):
     enable_quiet_logs()
-    configure_gpu()
+    configure_gpu(args.gpus)
     scenes = discover_scene_paths(args.root_dir, "Test")
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
@@ -188,6 +192,7 @@ def build_arg_parser():
     common.add_argument("--edge", type=int, default=2)
     common.add_argument("--scale", type=int, default=4)
     common.add_argument("--quiet", action="store_true")
+    common.add_argument("--gpus", type=int, default=1, help="Number of GPUs to use (>=1)")
     common.add_argument("--max-scenes", type=int, default=0, help="0 = all scenes")
 
     pt = sub.add_parser("train", parents=[common])
