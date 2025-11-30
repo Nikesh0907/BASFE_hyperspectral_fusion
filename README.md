@@ -1,4 +1,41 @@
 # BASFE Hyperspectral Fusion
+## BASFE Hyperspectral Fusion (CAVE-ready)
+
+This workspace includes a minimal Python package `basfe_fusion` that aligns with the BASFE PaviaU demo but generalizes it for multi-scene datasets like CAVE.
+
+### Expected Dataset Layout
+```
+<ROOT>/
+	Train/
+		HSI/*.mat
+		RGB/*.mat
+	Test/
+		HSI/*.mat
+		RGB/*.mat
+```
+Pairs are matched by sorted filename order per folder.
+
+### Quick Commands
+Train (1 epoch):
+```
+python -m basfe_fusion.main train --root-dir <ROOT> --epochs 1 --quiet --save-dir ./_saved_models
+```
+
+Reconstruct test scenes:
+```
+python -m basfe_fusion.main reconstruct --root-dir <ROOT> --model-path ./_saved_models/model_trained --out-dir ./results --quiet
+```
+
+Compute metrics (pseudo-GT if GT missing):
+```
+python -m basfe_fusion.main metrics --root-dir <ROOT> --model-path ./_saved_models/model_trained --out-dir ./results --pseudo-gt --quiet
+```
+
+### Notes
+- Inputs: HR-MSI (RGB) + upsampled LR-HSI; Target: HR-HSI.
+- If LR-HSI not provided, it is synthesized via blur+downsample from HR-HSI and upsampled back.
+- Normalization: per-scene min-max to [0,1].
+- Metrics: RMSE, PSNR, SAM, ERGAS, MSSIM, CC.
 
 Modular implementation of BASFE-based hyperspectral–multispectral fusion supporting CAVE-style datasets (Train/Test folders with text index lists) and legacy directory layouts. The original notebook `_BASFE_PaviaU.ipynb` has been refactored into reusable Python modules under `basfe_fusion/`.
 

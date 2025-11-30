@@ -1,3 +1,100 @@
+import os
+from typing import List, Tuple, Dict, Optional
+import numpy as np
+import cv2 as cv
+
+from .io_utils import load_mat_first_array, minmax01
+
+
+def _bicubic_upsample_to(target_hw: Tuple[int, int], lr: np.ndarray) -> np.ndarray:
+    h, w = target_hw
+    return cv.resize(lr, (w, h), interpolation=cv.INTER_CUBIC)
+
+
+def _make_lr_from_hr(hr: np.ndarray, scale: int = 4, sigma: int = 2) -> np.ndarray:
+    # Gaussian blur then downsample by scale
+    blurred = cv.GaussianBlur(hr, (scale + 1, scale + 1), sigma)
+    rows = np.int32(np.arange(np.ceil(scale / 2), hr.shape[0], scale))
+    cols = np.int32(np.arange(np.ceil(scale / 2), hr.shape[1], scale))
+    return blurred[rows][:, cols]
+
+
+def discover_scene_paths(root_dir: str, split: str) -> List[Dict[str, str]]:
+    """Discover scenes under root_dir for given split (Train/Test).
+
+    Expected layout:
+      root_dir/
+        Train/
+          HSI/*.mat
+          RGB/*.mat or *.npy
+        Test/
+          HSI/*.mat
+          RGB/*.mat or *.npy
+    Returns list of dicts with keys: 'hsi', 'rgb'.
+    """
+    base = os.path.join(root_dir, split)
+    hsi_dir = os.path.join(base, "HSI")
+    rgb_dir = os.path.join(base, "RGB")
+    scenes = []
+    if not os.path.isdir(hsi_dir) or not os.path.isdir(rgb_dir):
+        return scenes
+    hsi_files = sorted([os.path.join(hsi_dir, f) for f in os.listdir(hsi_dir) if f.endswith(".mat")])
+    rgb_files = sorted([os.path.join(rgb_dir, f) for f in os.listdir(rgb_dir) if f.endswith(".mat")])
+    # Simple pairing by index order
+    for i in range(min(len(hsi_files), len(rgb_files))):
+        scenes.append({"hsi": hsi_files[i], "rgb": rgb_files[i]})
+    return scenes
+
+
+def load_scene(hsi_path: str, rgb_path: str, scale: int = 4) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load HR-HSI (GT), HR-MSI (RGB), and upsampled LR-HSI.
+
+    If LR-HSI is not provided, generate LR-HSI from HR-HSI via blur+downsample, then upsample to HR size.
+    """
+    hrhsi = minmax01(load_mat_first_array(hsi_path))
+    hrmsi = minmax01(load_mat_first_array(rgb_path))
+    if hrmsi.ndim == 2:
+        hrmsi = hrmsi[..., None]
+
+    lrhsi_lr = _make_lr_from_hr(hrhsi, scale=scale)
+    lrhsi_up = _bicubic_upsample_to(hrhsi.shape[:2], lrhsi_lr)
+    return hrhsi, hrmsi, lrhsi_up
+
+
+def extract_patches(hrhsi: np.ndarray, hrmsi: np.ndarray, lrhsi_up: np.ndarray, hrsize: int = 20, stride: int = 7) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    H, W, L = hrhsi.shape
+    M = hrmsi.shape[2]
+    ii = np.arange(0, H - hrsize + 1, stride)
+    jj = np.arange(0, W - hrsize + 1, stride)
+    n = ii.size * jj.size
+    hrdata = np.zeros((n, hrsize, hrsize, L), dtype=np.float32)
+    lrdata = np.zeros((n, hrsize, hrsize, L), dtype=np.float32)
+    mrdata = np.zeros((n, hrsize, hrsize, M), dtype=np.float32)
+    c = 0
+    for i in ii:
+        for j in jj:
+            hrdata[c] = hrhsi[i:i + hrsize, j:j + hrsize]
+            lrdata[c] = lrhsi_up[i:i + hrsize, j:j + hrsize]
+            mrdata[c] = hrmsi[i:i + hrsize, j:j + hrsize]
+            c += 1
+    return hrdata, lrdata, mrdata
+
+
+def tile_indices(H: int, W: int, hrsize: int, edge: int) -> Tuple[np.ndarray, np.ndarray]:
+    strider = hrsize - 2 * edge
+    ii = np.arange(0, H, strider)
+    jj = np.arange(0, W, strider)
+    if ii.size > 0 and ii[-1] + hrsize > H:
+        ii[-1] = H - hrsize
+    if ii.size > 1 and ii[-2] >= ii[-1]:
+        ii[-2] = ii[-1]
+        ii = ii[:-1]
+    if jj.size > 0 and jj[-1] + hrsize > W:
+        jj[-1] = W - hrsize
+    if jj.size > 1 and jj[-2] >= jj[-1]:
+        jj[-2] = jj[-1]
+        jj = jj[:-1]
+    return ii, jj
 import os, math, random, numpy as np
 import cv2 as cv  # Added to support resize operations (was missing, caused NameError)
 from tqdm.auto import tqdm

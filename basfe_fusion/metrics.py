@@ -1,3 +1,51 @@
+import numpy as np
+
+
+def rmse_psnr(x: np.ndarray, y: np.ndarray) -> tuple[float, float, np.ndarray]:
+    z = x.shape
+    n = z[0] * z[1]
+    temp = np.sum(np.sum((x - y) * (x - y), axis=0), axis=0) / n
+    rmse_per_band = np.sqrt(temp)
+    rmse_total = np.sqrt(np.sum(temp) / z[2])
+    psnr = 10 * np.log10(1.0 / (rmse_total ** 2 + 1e-12))
+    return rmse_total, psnr, rmse_per_band
+
+
+def sam(x: np.ndarray, y: np.ndarray) -> float:
+    num = np.sum(x * y, axis=2)
+    den = np.sqrt(np.sum(x * x, axis=2) * np.sum(y * y, axis=2)) + 1e-12
+    ang = np.arccos(np.clip(num / den, -1.0, 1.0))
+    return float(np.mean(ang) * 180.0 / np.pi)
+
+
+def ergas(x: np.ndarray, y: np.ndarray, scale: int) -> float:
+    z = x.shape
+    n = z[0] * z[1]
+    mean_y = np.sum(np.sum(y, axis=0), axis=0) / n
+    rmse_total, _, rmse_per_band = rmse_psnr(x, y)
+    return float(100.0 / scale * np.sqrt(np.sum((rmse_per_band / (mean_y + 1e-12)) ** 2) / z[2]))
+
+
+def mssim_cc(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    z = x.shape
+    n = z[0] * z[1]
+    mean_x = np.sum(np.sum(x, axis=0), axis=0) / n
+    mean_y = np.sum(np.sum(y, axis=0), axis=0) / n
+    c1 = 1e-4
+    c2 = 1e-4
+    ssim = np.zeros((z[2]))
+    cc = np.zeros((z[2]))
+    for i in range(z[2]):
+        sig2_x = np.mean(x[:, :, i] ** 2) - mean_x[i] ** 2
+        sig2_y = np.mean(y[:, :, i] ** 2) - mean_y[i] ** 2
+        sigma_xy = np.mean(x[:, :, i] * y[:, :, i]) - mean_x[i] * mean_y[i]
+        ssim[i] = ((2 * mean_x[i] * mean_y[i] + c1) * (2 * sigma_xy + c2)) / (
+            (mean_x[i] ** 2 + mean_y[i] ** 2 + c1) * (sig2_x + sig2_y + c2)
+        )
+        cc[i] = np.sum((x[:, :, i] - mean_x[i]) * (y[:, :, i] - mean_y[i])) / (
+            np.sqrt(np.sum((x[:, :, i] - mean_x[i]) ** 2) * np.sum((y[:, :, i] - mean_y[i]) ** 2) + 1e-12)
+        )
+    return float(np.mean(ssim)), float(np.mean(cc))
 import os, json, numpy as np
 import cv2 as cv
 from math import log10
