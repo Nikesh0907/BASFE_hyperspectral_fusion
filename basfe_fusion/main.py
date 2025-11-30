@@ -190,7 +190,24 @@ def train(args):
         print(f"Warning: patch set uses ~{est_bytes/1_000_000_000:.2f} GB; consider increasing stride, subsampling, or random sampling with fewer patches.")
 
     model = build_basfe_model(hrsize=hrsize, hsi_bands=hsi_bands, msi_bands=msi_bands, num_filter=args.num_filter)
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=args.lr), loss=keras.losses.MeanSquaredError())
+
+    # Learning rate scheduling
+    lr_value = args.lr
+    lr_schedule = None
+    if args.lr_schedule == "cosine":
+        # Cosine decay from initial lr to lr_min over decay_steps (approx epochs * steps per epoch)
+        decay_steps = max(1, args.lr_decay_steps)
+        lr_schedule = keras.optimizers.schedules.CosineDecay(initial_learning_rate=lr_value, decay_steps=decay_steps, alpha=args.lr_min / max(lr_value, 1e-12))
+    elif args.lr_schedule == "step":
+        # Simple piecewise step decay: lr * (decay_rate) every decay_steps
+        def step_fn(step):
+            return lr_value * (args.lr_decay_rate ** (step // max(1, args.lr_decay_steps)))
+        lr_schedule = keras.optimizers.schedules.LearningRateSchedule.__call__(lambda self, step: step_fn(step))
+        # Fallback: if above is awkward, use ExponentialDecay approximating step
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr_value, decay_steps=max(1, args.lr_decay_steps), decay_rate=args.lr_decay_rate, staircase=True)
+
+    optimizer = keras.optimizers.Adam(learning_rate=lr_schedule or lr_value)
+    model.compile(optimizer=optimizer, loss=keras.losses.MeanSquaredError())
 
     if args.save_dir:
         os.makedirs(args.save_dir, exist_ok=True)
@@ -204,6 +221,10 @@ def train(args):
             print(f"Epoch {epoch+1}/{args.epochs} time: {dur:.2f}s")
 
     callbacks = [EpochTiming()]
+    if args.reduce_on_plateau:
+        callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5, patience=max(1, args.plateau_patience), min_lr=args.lr_min))
+    if args.early_stopping:
+        callbacks.append(keras.callbacks.EarlyStopping(monitor='loss', patience=max(1, args.es_patience), restore_best_weights=True))
     verbose = 1 if (not args.quiet or args.show_progress) else 0
     print(f"Training summary: scenes_used={len(scene_subset)} sampling={args.sampling} patches_per_scene={patch_counts} total_patches={hrdata.shape[0]}")
     if args.epochs > 0:
@@ -354,6 +375,15 @@ def build_arg_parser():
     pt.add_argument("--augment", action="store_true", help="Enable random flips/rotations augmentation")
     pt.add_argument("--max-total-patches", type=int, default=0, help="Cap total patches after collection (0=no cap)")
     pt.add_argument("--seed", type=int, default=0, help="RNG seed for reproducibility")
+    # LR scheduling & callbacks
+    pt.add_argument("--lr-schedule", choices=["none","cosine","step"], default="none", help="Learning rate schedule")
+    pt.add_argument("--lr-decay-steps", type=int, default=10000, help="Decay steps for schedules (approx batches)")
+    pt.add_argument("--lr-decay-rate", type=float, default=0.5, help="Decay rate for step schedule")
+    pt.add_argument("--lr-min", type=float, default=1e-6, help="Minimum lr for cosine/plateau")
+    pt.add_argument("--reduce-on-plateau", action="store_true", help="Enable ReduceLROnPlateau on training loss")
+    pt.add_argument("--plateau-patience", type=int, default=5, help="Patience epochs for ReduceLROnPlateau")
+    pt.add_argument("--early-stopping", action="store_true", help="Enable EarlyStopping on training loss")
+    pt.add_argument("--es-patience", type=int, default=15, help="Patience epochs for EarlyStopping")
 
     pr = sub.add_parser("reconstruct", parents=[common])
     pr.add_argument("--model-path", type=str, required=True)
