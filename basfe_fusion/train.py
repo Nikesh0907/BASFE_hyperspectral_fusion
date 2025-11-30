@@ -26,6 +26,31 @@ class BatchProgress(keras.callbacks.Callback):
             print(f"  Batch {batch+1}/{self.total_batches} loss={logs.get('loss'):.5f} epoch_elapsed={int(elapsed_epoch)}s epoch_eta={int(remaining)}s")
 
 
+class EpochStats(keras.callbacks.Callback):
+    def __init__(self, x_msi, x_lr, y_hr):
+        super().__init__()
+        self.x_msi = x_msi
+        self.x_lr = x_lr
+        self.y_hr = y_hr
+        self.epoch_start = None
+        self.losses = []
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch_start = time.time()
+        self.losses = []
+    def on_train_batch_end(self, batch, logs=None):
+        if logs and 'loss' in logs:
+            self.losses.append(float(logs['loss']))
+    def on_epoch_end(self, epoch, logs=None):
+        epoch_time = time.time() - (self.epoch_start or time.time())
+        avg_loss = float(np.mean(self.losses)) if self.losses else float(logs.get('loss', 0.0))
+        # Compute average PSNR on a small validation subset (use 1024 patches or full if smaller)
+        n = min(1024, self.x_msi.shape[0])
+        preds = self.model.predict({'msi_input': self.x_msi[:n], 'lr_input': self.x_lr[:n]}, verbose=0)
+        mse = np.mean((preds - self.y_hr[:n])**2)
+        psnr = 10.0 * np.log10(1.0 / (mse + 1e-12))
+        print(f"[Epoch {epoch+1}] avg_loss={avg_loss:.6f} epoch_time={int(epoch_time)}s avg_psnr={psnr:.3f}dB")
+
+
 def train_model(model, hrdata, lrdata, mrdata, config):
     steps_per_epoch = math.ceil(hrdata.shape[0] / config['BATCH_SIZE'])
     callbacks = [
@@ -35,7 +60,8 @@ def train_model(model, hrdata, lrdata, mrdata, config):
             monitor='loss', save_best_only=True, save_weights_only=False, verbose=1),
         keras.callbacks.EarlyStopping(monitor='loss', patience=config['EARLY_STOP_PATIENCE'], restore_best_weights=True, verbose=1),
         keras.callbacks.TensorBoard(log_dir=config['LOG_DIR'], write_graph=False, update_freq='epoch'),
-        BatchProgress(every_n=config['TRAIN_PROGRESS_EVERY_BATCHES'], total_batches=steps_per_epoch)
+        BatchProgress(every_n=config['TRAIN_PROGRESS_EVERY_BATCHES'], total_batches=steps_per_epoch),
+        EpochStats(mrdata, lrdata, hrdata)
     ]
     model.compile(optimizer=tf.optimizers.Adam(learning_rate=config['LEARNING_RATE']), loss=keras.losses.MeanSquaredError())
     print('Starting training: epochs', config['EPOCHS'], 'batch size', config['BATCH_SIZE'], 'steps/epoch', steps_per_epoch)

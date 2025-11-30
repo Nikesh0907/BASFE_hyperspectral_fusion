@@ -28,6 +28,12 @@ def prepare(conf):
 
 def run(args):
     conf = cfg.load_config(force_fast=args.fast_test, root_dir=args.root_dir, use_gt=args.use_gt)
+    if args.epochs is not None:
+        try:
+            conf['EPOCHS'] = int(args.epochs)
+            print('Overriding EPOCHS to', conf['EPOCHS'])
+        except Exception:
+            print('Invalid --epochs value; using default in config.')
     prepare(conf)
     train_hr_hsi_files, train_lr_hsi_files, train_hr_msi_files, test_lr_hsi_files, test_hr_msi_files = discover_files(conf)
     print('Train counts -> HR-HSI', len(train_hr_hsi_files), 'LR-HSI', len(train_lr_hsi_files), 'MSI', len(train_hr_msi_files))
@@ -74,6 +80,7 @@ def parse_args():
     p.add_argument('--root-dir', type=str, default=None, help='Override dataset root directory')
     p.add_argument('--fast-test', type=lambda x: str(x).lower() in ('1','true','yes','y'), default=None, help='Enable fast test preset (smoke).')
     p.add_argument('--use-gt', type=lambda x: str(x).lower() in ('1','true','yes','y'), default=None, help='Enable ground truth metrics computation.')
+    p.add_argument('--epochs', type=int, default=None, help='Override number of training epochs')
     return p.parse_args()
 
 if __name__ == '__main__':
