@@ -41,6 +41,31 @@ def configure_gpu(num_gpus: int):
         pass
 
 
+def infer_hrsize_from_model(model):
+    """Infer patch size from a loaded model (used in reconstruct/metrics)."""
+    try:
+        li = model.get_layer('msi_input')
+        val = getattr(li, 'batch_input_shape', None)
+        if val and val[1]:
+            return int(val[1])
+    except Exception:
+        pass
+    try:
+        li = model.get_layer('lr_input')
+        val = getattr(li, 'batch_input_shape', None)
+        if val and val[1]:
+            return int(val[1])
+    except Exception:
+        pass
+    try:
+        s = model.inputs[0].shape[1]
+        if s:
+            return int(s)
+    except Exception:
+        pass
+    return None
+
+
 def train(args):
     enable_quiet_logs()
     configure_gpu(args.gpus)
@@ -48,32 +73,7 @@ def train(args):
     if not scenes:
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
 
-    # Ensure patch size matches the trained model
-    # Try to infer patch size from the saved model input layers
-    def _infer_hrsize_from_model(m):
-        try:
-            li = m.get_layer('msi_input')
-            val = getattr(li, 'batch_input_shape', None)
-            if val and val[1]:
-                return int(val[1])
-        except Exception:
-            pass
-        try:
-            li = m.get_layer('lr_input')
-            val = getattr(li, 'batch_input_shape', None)
-            if val and val[1]:
-                return int(val[1])
-        except Exception:
-            pass
-        try:
-            s = m.inputs[0].shape[1]
-            if s:
-                return int(s)
-        except Exception:
-            pass
-        return None
-
-    hrsize = _infer_hrsize_from_model(model) or args.hrsize
+    hrsize = args.hrsize  # Always use provided patch size for training
     stride = args.stride
     scale = args.scale
 
@@ -120,7 +120,8 @@ def reconstruct(args):
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
 
-    hrsize = _infer_hrsize_from_model(model) or args.hrsize
+    inferred = infer_hrsize_from_model(model)
+    hrsize = inferred or args.hrsize
     edge = args.edge
     scale = args.scale
 
@@ -162,12 +163,13 @@ def compute_metrics(args):
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
 
-    # Training uses the CLI-provided patch size
-    hrsize = args.hrsize
+    # Use model input size if available for consistency, else CLI value
+    model = keras.models.load_model(args.model_path)
+    hrsize = infer_hrsize_from_model(model) or args.hrsize
     edge = args.edge
     scale = args.scale
 
-    model = keras.models.load_model(args.model_path)
+    # model already loaded above
     out = {}
     for idx, s in enumerate(scenes[: args.max_scenes or len(scenes)]):
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
