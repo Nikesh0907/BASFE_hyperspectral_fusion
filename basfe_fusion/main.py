@@ -15,8 +15,20 @@ def enable_quiet_logs():
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 
+def configure_gpu():
+    try:
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            # Use only the first GPU to reduce memory pressure
+            tf.config.set_visible_devices(gpus[0], 'GPU')
+            tf.config.experimental.set_memory_growth(gpus[0], True)
+    except Exception:
+        pass
+
+
 def train(args):
     enable_quiet_logs()
+    configure_gpu()
     scenes = discover_scene_paths(args.root_dir, "Train")
     if not scenes:
         raise RuntimeError("No training scenes found under Train/HSI and Train/RGB")
@@ -61,6 +73,7 @@ def train(args):
 
 def reconstruct(args):
     enable_quiet_logs()
+    configure_gpu()
     model = keras.models.load_model(args.model_path)
     scenes = discover_scene_paths(args.root_dir, "Test")
     if not scenes:
@@ -103,6 +116,7 @@ def reconstruct(args):
 
 def compute_metrics(args):
     enable_quiet_logs()
+    configure_gpu()
     scenes = discover_scene_paths(args.root_dir, "Test")
     if not scenes:
         raise RuntimeError("No test scenes found under Test/HSI and Test/RGB")
