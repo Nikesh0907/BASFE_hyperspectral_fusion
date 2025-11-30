@@ -1,4 +1,5 @@
 import os, json, numpy as np
+import cv2 as cv
 from math import log10
 from tqdm.auto import tqdm
 from .utils import load_first_cube, list_mats
@@ -49,6 +50,9 @@ def compute_metrics(reconstructed, config, scale):
     else:
         gt_dir_full = None
     if not (gt_dir_full and os.path.isdir(gt_dir_full)):
+        if config.get('PSEUDO_GT_TEST_HSI'):
+            print('Real GT directory missing; using pseudo-GT (upsampled test LR-HSI).')
+            return _compute_pseudo_gt_metrics(reconstructed, config, scale)
         print('GT directory missing; skipping metrics.')
         return {}
     test_bases = config.get('TEST_BASENAMES')
@@ -93,4 +97,39 @@ def compute_metrics(reconstructed, config, scale):
         os.makedirs(config['RESULTS_DIR'], exist_ok=True)
         with open(out_path,'w') as f: json.dump(results, f, indent=2)
         print('Saved metrics.json')
+    return results
+
+def _compute_pseudo_gt_metrics(reconstructed, config, scale):
+    test_lr_files = config.get('TEST_LR_HSI_FILES', [])
+    if not test_lr_files:
+        print('Pseudo-GT: no test LR-HSI files available.')
+        return {}
+    from .utils import load_first_cube
+    lr_map = {os.path.splitext(os.path.basename(p))[0]: p for p in test_lr_files}
+    results = {}
+    for scene in reconstructed.keys():
+        key = scene if scene in lr_map else None
+        if not key:
+            scene_norm = scene.lower().replace(' ','_')
+            for k in lr_map.keys():
+                if k.lower().replace(' ','_') == scene_norm:
+                    key = k; break
+        if not key:
+            print(f'Pseudo-GT: LR-HSI not found for {scene}')
+            continue
+        try:
+            lr_cube,_ = load_first_cube(lr_map[key])
+            H,W,Cp = reconstructed[scene].shape
+            up_lr = cv.resize(lr_cube, (W, H), interpolation=cv.INTER_CUBIC)
+            C_use = min(Cp, up_lr.shape[2])
+            pred_crop = reconstructed[scene][:,:,:C_use]
+            up_lr_crop = up_lr[:,:,:C_use]
+            results[scene] = _metrics(pred_crop, up_lr_crop, scale)
+        except Exception as e:
+            print(f'Pseudo-GT metrics failed for {scene}:', e)
+    if results:
+        out_path = os.path.join(config['RESULTS_DIR'], 'metrics_pseudo_gt.json')
+        os.makedirs(config['RESULTS_DIR'], exist_ok=True)
+        with open(out_path,'w') as f: json.dump(results, f, indent=2)
+        print('Saved metrics_pseudo_gt.json')
     return results

@@ -43,6 +43,8 @@ def run(args):
     if args.gt_dir:
         # Accept absolute or relative; if relative, assume under ROOT_DIR
         conf['TEST_GT_HR_HSI_DIR'] = args.gt_dir
+    if args.pseudo_gt_test_hsi:
+        conf['PSEUDO_GT_TEST_HSI'] = True
     if args.epochs is not None:
         try:
             conf['EPOCHS'] = int(args.epochs)
@@ -98,6 +100,7 @@ def parse_args():
     p.add_argument('--epochs', type=int, default=None, help='Override number of training epochs')
     p.add_argument('--gt-dir', type=str, default=None, help='Override GT directory for metrics (absolute or relative)')
     p.add_argument('--quiet', action='store_true', help='Reduce TensorFlow/absl log verbosity')
+    p.add_argument('--pseudo-gt-test-hsi', action='store_true', help='Use upsampled test LR-HSI as pseudo GT when real GT missing')
     # Note: disabling XLA via env flags is brittle in some runners; omitted.
     return p.parse_args()
 

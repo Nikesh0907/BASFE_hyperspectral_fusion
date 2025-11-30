@@ -51,6 +51,7 @@ def base_config():
         'MICRO_DEBUG_MODE': False,'MICRO_MAX_PATCHES': 64,'MICRO_EPOCHS': 1,'MICRO_MAX_TRAIN_SCENES': 1,
         'PRED_PIXEL_BUDGET': 2048,'RECON_STRIDE_MULT': 1,'RECON_MAX_PATCHES': None,
         'DERIVE_LR_FROM_HR': False,
+        'PSEUDO_GT_TEST_HSI': False,
     }
 
 def apply_fast_test(config):
@@ -110,6 +111,8 @@ def summarize(config):
         print('AUTOTUNE_PATCH used for adaptive sizing.')
     if config.get('USE_GT'):
         print('GT enabled. TEST_GT_HR_HSI_DIR:', config.get('TEST_GT_HR_HSI_DIR'))
+    if config.get('PSEUDO_GT_TEST_HSI'):
+        print('Pseudo-GT fallback (upsampled test LR-HSI) enabled.')
     print('----------------------\n')
 
 
