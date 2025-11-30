@@ -51,12 +51,12 @@ def train(args):
 
     if args.save_dir:
         os.makedirs(args.save_dir, exist_ok=True)
-        model.save(os.path.join(args.save_dir, "model_untrained"))
+        model.save(os.path.join(args.save_dir, "model_untrained.keras"))
 
     model.fit({"msi_input": mrdata, "lr_input": lrdata}, {"fuse_output": hrdata}, epochs=args.epochs, batch_size=args.batch_size, verbose=1 if not args.quiet else 0)
 
     if args.save_dir:
-        model.save(os.path.join(args.save_dir, "model_trained"))
+        model.save(os.path.join(args.save_dir, "model_trained.keras"))
 
 
 def reconstruct(args):
