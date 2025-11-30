@@ -98,21 +98,96 @@ def train(args):
         print(f"Building training patches (hrsize={hrsize}, stride={stride}) from {len(scene_subset)} scene(s)...")
     loop = tqdm(scene_subset, desc="Train scenes", unit="scene") if ((not args.quiet and tqdm) or (args.show_progress and tqdm)) else scene_subset
     patch_counts = []
+    rng = np.random.default_rng(seed=getattr(args, 'seed', None))
+
+    def augment_triplet(hr_patch, lr_patch, mr_patch):
+        if not args.augment:
+            return hr_patch, lr_patch, mr_patch
+        # Random horizontal flip
+        if rng.random() < 0.5:
+            hr_patch = hr_patch[:, ::-1, :]
+            lr_patch = lr_patch[:, ::-1, :]
+            mr_patch = mr_patch[:, ::-1, :]
+        # Random vertical flip
+        if rng.random() < 0.5:
+            hr_patch = hr_patch[::-1, :, :]
+            lr_patch = lr_patch[::-1, :, :]
+            mr_patch = mr_patch[::-1, :, :]
+        # Random 0/90/180/270 rotation
+        k = rng.integers(0, 4)
+        if k:
+            hr_patch = np.rot90(hr_patch, k, axes=(0, 1))
+            lr_patch = np.rot90(lr_patch, k, axes=(0, 1))
+            mr_patch = np.rot90(mr_patch, k, axes=(0, 1))
+        return hr_patch, lr_patch, mr_patch
+
     for s in loop:
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
         if hsi_bands is None:
             hsi_bands = hrhsi.shape[2]
         if msi_bands is None:
             msi_bands = hrmsi.shape[2]
-        h, l, m = extract_patches(hrhsi, hrmsi, lrhsi_up, hrsize=hrsize, stride=stride)
-        hr_list.append(h)
-        lr_list.append(l)
-        mr_list.append(m)
-        patch_counts.append(h.shape[0])
+        scene_patches_hr = []
+        scene_patches_lr = []
+        scene_patches_mr = []
+        if args.sampling == "grid":
+            # Full grid extraction then optional subsample
+            h, l, m = extract_patches(hrhsi, hrmsi, lrhsi_up, hrsize=hrsize, stride=stride)
+            if args.subsample_factor > 1:
+                idx = np.arange(h.shape[0])
+                keep = idx[idx % args.subsample_factor == 0]
+                h = h[keep]; l = l[keep]; m = m[keep]
+            for pi in range(h.shape[0]):
+                ah, al, am = augment_triplet(h[pi], l[pi], m[pi])
+                scene_patches_hr.append(ah)
+                scene_patches_lr.append(al)
+                scene_patches_mr.append(am)
+        else:  # random sampling
+            H, W, _ = hrhsi.shape
+            max_i = H - hrsize
+            max_j = W - hrsize
+            # Auto random count heuristic if not specified: approximate moderate overlap grid
+            rand_count = args.random_per_scene or int(((H - hrsize) / max(stride, hrsize//2) + 1) * ((W - hrsize) / max(stride, hrsize//2) + 1))
+            for _ in range(rand_count):
+                i = rng.integers(0, max_i + 1)
+                j = rng.integers(0, max_j + 1)
+                hr_patch = hrhsi[i:i+hrsize, j:j+hrsize, :]
+                lr_patch = lrhsi_up[i:i+hrsize, j:j+hrsize, :]
+                mr_patch = hrmsi[i:i+hrsize, j:j+hrsize, :]
+                ah, al, am = augment_triplet(hr_patch, lr_patch, mr_patch)
+                scene_patches_hr.append(ah)
+                scene_patches_lr.append(al)
+                scene_patches_mr.append(am)
+        # Collate scene
+        if scene_patches_hr:
+            hr_scene_arr = np.stack(scene_patches_hr, axis=0)
+            lr_scene_arr = np.stack(scene_patches_lr, axis=0)
+            mr_scene_arr = np.stack(scene_patches_mr, axis=0)
+            hr_list.append(hr_scene_arr)
+            lr_list.append(lr_scene_arr)
+            mr_list.append(mr_scene_arr)
+            patch_counts.append(hr_scene_arr.shape[0])
+
+    if not hr_list:
+        raise RuntimeError("No patches collected; adjust sampling parameters.")
 
     hrdata = np.concatenate(hr_list, axis=0)
     lrdata = np.concatenate(lr_list, axis=0)
     mrdata = np.concatenate(mr_list, axis=0)
+
+    # Optional cap total patches
+    if args.max_total_patches and hrdata.shape[0] > args.max_total_patches:
+        sel = rng.choice(hrdata.shape[0], size=args.max_total_patches, replace=False)
+        hrdata = hrdata[sel]; lrdata = lrdata[sel]; mrdata = mrdata[sel]
+        # Recompute patch counts approximation
+        # (We cannot map back to scenes easily after shuffle; just show total)
+        patch_counts = ["capped"]
+
+    # Memory warning
+    triplet_bytes = hrdata[0].nbytes + lrdata[0].nbytes + mrdata[0].nbytes
+    est_bytes = triplet_bytes * hrdata.shape[0]
+    if est_bytes > 2_000_000_000:  # > ~2GB
+        print(f"Warning: patch set uses ~{est_bytes/1_000_000_000:.2f} GB; consider increasing stride, subsampling, or random sampling with fewer patches.")
 
     model = build_basfe_model(hrsize=hrsize, hsi_bands=hsi_bands, msi_bands=msi_bands, num_filter=args.num_filter)
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=args.lr), loss=keras.losses.MeanSquaredError())
@@ -130,7 +205,7 @@ def train(args):
 
     callbacks = [EpochTiming()]
     verbose = 1 if (not args.quiet or args.show_progress) else 0
-    print(f"Training summary: scenes_used={len(scene_subset)} patches_per_scene={patch_counts} total_patches={hrdata.shape[0]}")
+    print(f"Training summary: scenes_used={len(scene_subset)} sampling={args.sampling} patches_per_scene={patch_counts} total_patches={hrdata.shape[0]}")
     if args.epochs > 0:
         model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=verbose, callbacks=callbacks)
 
@@ -273,6 +348,12 @@ def build_arg_parser():
     pt.add_argument("--num-filter", type=int, default=32)
     pt.add_argument("--save-dir", type=str, default="./_saved_models")
     pt.add_argument("--list-scenes", action="store_true", help="List discovered training scenes and exit")
+    pt.add_argument("--sampling", choices=["grid","random"], default="grid", help="Patch sampling strategy")
+    pt.add_argument("--random-per-scene", type=int, default=0, help="Random patches per scene (sampling=random, 0=auto heuristic)")
+    pt.add_argument("--subsample-factor", type=int, default=1, help="Keep every K-th grid patch (sampling=grid)")
+    pt.add_argument("--augment", action="store_true", help="Enable random flips/rotations augmentation")
+    pt.add_argument("--max-total-patches", type=int, default=0, help="Cap total patches after collection (0=no cap)")
+    pt.add_argument("--seed", type=int, default=0, help="RNG seed for reproducibility")
 
     pr = sub.add_parser("reconstruct", parents=[common])
     pr.add_argument("--model-path", type=str, required=True)
