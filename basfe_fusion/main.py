@@ -9,14 +9,23 @@ from .metrics import compute_metrics
 
 
 def enable_mixed_precision(conf):
-    if conf['MIXED_PRECISION']:
+    mp = conf.get('MIXED_PRECISION')
+    if mp:
+        # Allow common shorthand aliases
+        alias_map = {
+            'fp16': 'mixed_float16',
+            'float16': 'mixed_float16',
+            'bf16': 'mixed_bfloat16',
+            'bfloat16': 'mixed_bfloat16'
+        }
+        policy_name = alias_map.get(str(mp).lower(), mp)
         try:
             from tensorflow.keras import mixed_precision
-            policy = mixed_precision.Policy(conf['MIXED_PRECISION'])
+            policy = mixed_precision.Policy(policy_name)
             mixed_precision.set_global_policy(policy)
             print('Mixed precision enabled:', policy)
         except Exception as e:
-            print('Mixed precision failed:', e)
+            print('Mixed precision failed:', e, '\nRequested:', mp, 'Resolved policy:', policy_name)
 
 
 def prepare(conf):

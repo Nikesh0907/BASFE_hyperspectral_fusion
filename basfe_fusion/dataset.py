@@ -1,4 +1,5 @@
 import os, math, random, numpy as np
+import cv2 as cv  # Added to support resize operations (was missing, caused NameError)
 from tqdm.auto import tqdm
 from .utils import load_first_cube, load_rgb_any, read_list, list_mats
 
