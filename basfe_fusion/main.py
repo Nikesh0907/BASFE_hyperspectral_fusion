@@ -69,7 +69,8 @@ def train(args):
         os.makedirs(args.save_dir, exist_ok=True)
         model.save(os.path.join(args.save_dir, "model_untrained.keras"))
 
-    model.fit({"msi_input": mrdata, "lr_input": lrdata}, {"fuse_output": hrdata}, epochs=args.epochs, batch_size=args.batch_size, verbose=1 if not args.quiet else 0)
+    # Newer Keras prefers positional inputs/targets over dicts for performance and clarity
+    model.fit([mrdata, lrdata], hrdata, epochs=args.epochs, batch_size=args.batch_size, verbose=1 if not args.quiet else 0)
 
     if args.save_dir:
         model.save(os.path.join(args.save_dir, "model_trained.keras"))
@@ -103,7 +104,7 @@ def reconstruct(args):
                 mrdatainput[c] = hrmsi[i : i + hrsize, j : j + hrsize]
                 lrdatainput[c] = lrhsi_up[i : i + hrsize, j : j + hrsize]
                 c += 1
-        pred = model.predict((mrdatainput, lrdatainput), verbose=0)
+        pred = model.predict([mrdatainput, lrdatainput], verbose=0)
         reconst = np.zeros_like(hrhsi)
         c = 0
         for i in ii:
@@ -145,7 +146,7 @@ def compute_metrics(args):
                 mrdatainput[c] = hrmsi[i : i + hrsize, j : j + hrsize]
                 lrdatainput[c] = lrhsi_up[i : i + hrsize, j : j + hrsize]
                 c += 1
-        pred = model.predict((mrdatainput, lrdatainput), verbose=0)
+        pred = model.predict([mrdatainput, lrdatainput], verbose=0)
         reconst = np.zeros_like(hrhsi)
         c = 0
         for i in ii:
