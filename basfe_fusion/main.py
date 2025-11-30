@@ -36,7 +36,15 @@ def prepare(conf):
 
 
 def run(args):
+    # Optional noise suppression and XLA control
+    if getattr(args, 'quiet', False):
+        os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL','2')  # suppress INFO and WARNING
+    if getattr(args, 'disable_xla', False):
+        os.environ['TF_XLA_FLAGS'] = '--xla_disable_gpu'
     conf = cfg.load_config(force_fast=args.fast_test, root_dir=args.root_dir, use_gt=args.use_gt)
+    if args.gt_dir:
+        # Accept absolute or relative; if relative, assume under ROOT_DIR
+        conf['TEST_GT_HR_HSI_DIR'] = args.gt_dir
     if args.epochs is not None:
         try:
             conf['EPOCHS'] = int(args.epochs)
@@ -90,6 +98,9 @@ def parse_args():
     p.add_argument('--fast-test', type=lambda x: str(x).lower() in ('1','true','yes','y'), default=None, help='Enable fast test preset (smoke).')
     p.add_argument('--use-gt', type=lambda x: str(x).lower() in ('1','true','yes','y'), default=None, help='Enable ground truth metrics computation.')
     p.add_argument('--epochs', type=int, default=None, help='Override number of training epochs')
+    p.add_argument('--gt-dir', type=str, default=None, help='Override GT directory for metrics (absolute or relative)')
+    p.add_argument('--quiet', action='store_true', help='Reduce TensorFlow/absl log verbosity')
+    p.add_argument('--disable-xla', action='store_true', help='Disable XLA to avoid slow operation alarms')
     return p.parse_args()
 
 if __name__ == '__main__':

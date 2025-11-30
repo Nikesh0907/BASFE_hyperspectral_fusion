@@ -43,7 +43,11 @@ def compute_metrics(reconstructed, config, scale):
     gt_dir_rel = config.get('TEST_GT_HR_HSI_DIR')
     if config.get('USE_GT') and not gt_dir_rel:
         gt_dir_rel = os.path.join(config['TEST_DIR'], config.get('GT_SUBDIR','GT_HR'))
-    gt_dir_full = os.path.join(config['ROOT_DIR'], gt_dir_rel) if gt_dir_rel else None
+    # Support absolute path override; else treat as relative to ROOT_DIR
+    if gt_dir_rel:
+        gt_dir_full = gt_dir_rel if os.path.isabs(gt_dir_rel) else os.path.join(config['ROOT_DIR'], gt_dir_rel)
+    else:
+        gt_dir_full = None
     if not (gt_dir_full and os.path.isdir(gt_dir_full)):
         print('GT directory missing; skipping metrics.')
         return {}
