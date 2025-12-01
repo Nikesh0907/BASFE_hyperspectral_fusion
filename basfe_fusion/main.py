@@ -83,7 +83,19 @@ def train(args):
             print(f"{i:02d}: HSI={os.path.basename(s['hsi'])} RGB={os.path.basename(s['rgb'])}")
         return
 
-    hrsize = args.hrsize  # Always use provided patch size for training
+    # Determine patch size; allow resume to dictate hrsize
+    model = None
+    hrsize = args.hrsize
+    if getattr(args, 'resume_from', None):
+        if os.path.isfile(args.resume_from):
+            model = keras.models.load_model(args.resume_from)
+            inferred = infer_hrsize_from_model(model)
+            if inferred:
+                hrsize = inferred
+            print(f"Resuming from: {args.resume_from} (hrsize inferred={hrsize})")
+        else:
+            raise FileNotFoundError(f"--resume-from not found: {args.resume_from}")
+
     stride = args.stride
     scale = args.scale
 
@@ -189,27 +201,27 @@ def train(args):
     if est_bytes > 2_000_000_000:  # > ~2GB
         print(f"Warning: patch set uses ~{est_bytes/1_000_000_000:.2f} GB; consider increasing stride, subsampling, or random sampling with fewer patches.")
 
-    model = build_basfe_model(hrsize=hrsize, hsi_bands=hsi_bands, msi_bands=msi_bands, num_filter=args.num_filter)
+    # Build or reuse model
+    if model is None:
+        model = build_basfe_model(hrsize=hrsize, hsi_bands=hsi_bands, msi_bands=msi_bands, num_filter=args.num_filter)
 
-    # Learning rate scheduling
-    lr_value = args.lr
-    lr_schedule = None
-    if args.lr_schedule == "cosine":
-        # Cosine decay from initial lr to lr_min over decay_steps (approx epochs * steps per epoch)
-        decay_steps = max(1, args.lr_decay_steps)
-        lr_schedule = keras.optimizers.schedules.CosineDecay(initial_learning_rate=lr_value, decay_steps=decay_steps, alpha=args.lr_min / max(lr_value, 1e-12))
-    elif args.lr_schedule == "step":
-        # Simple piecewise step decay: lr * (decay_rate) every decay_steps
-        def step_fn(step):
-            return lr_value * (args.lr_decay_rate ** (step // max(1, args.lr_decay_steps)))
-        lr_schedule = keras.optimizers.schedules.LearningRateSchedule.__call__(lambda self, step: step_fn(step))
-        # Fallback: if above is awkward, use ExponentialDecay approximating step
-        lr_schedule = keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr_value, decay_steps=max(1, args.lr_decay_steps), decay_rate=args.lr_decay_rate, staircase=True)
+        # Learning rate scheduling
+        lr_value = args.lr
+        lr_schedule = None
+        if args.lr_schedule == "cosine":
+            decay_steps = max(1, args.lr_decay_steps)
+            lr_schedule = keras.optimizers.schedules.CosineDecay(initial_learning_rate=lr_value, decay_steps=decay_steps, alpha=args.lr_min / max(lr_value, 1e-12))
+        elif args.lr_schedule == "step":
+            # Use ExponentialDecay with staircase to emulate step drops
+            lr_schedule = keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr_value, decay_steps=max(1, args.lr_decay_steps), decay_rate=args.lr_decay_rate, staircase=True)
 
-    optimizer = keras.optimizers.Adam(learning_rate=lr_schedule or lr_value)
-    model.compile(optimizer=optimizer, loss=keras.losses.MeanSquaredError())
+        optimizer = keras.optimizers.Adam(learning_rate=lr_schedule or lr_value)
+        model.compile(optimizer=optimizer, loss=keras.losses.MeanSquaredError())
+    else:
+        # Resumed model keeps its optimizer and schedule
+        pass
 
-    if args.save_dir:
+    if args.save_dir and not getattr(args, 'resume_from', None):
         os.makedirs(args.save_dir, exist_ok=True)
         model.save(os.path.join(args.save_dir, "model_untrained.keras"))
 
@@ -308,6 +320,7 @@ def compute_metrics(args):
 
     # model already loaded above
     out = {}
+    acc = {"rmse": [], "psnr": [], "sam_deg": [], "ergas": [], "mssim": [], "cc": []}
     for idx, s in enumerate(scenes[: args.max_scenes or len(scenes)]):
         hrhsi, hrmsi, lrhsi_up = load_scene(s["hsi"], s["rgb"], scale=scale)
         # Reconstruct quickly (same as reconstruct but in-memory)
@@ -341,7 +354,7 @@ def compute_metrics(args):
         sam_val = sam(reconst, gt)
         ergas_val = ergas(reconst, gt, scale=scale)
         mssim_val, cc_val = mssim_cc(reconst, gt)
-        out[f"scene_{idx+1}"] = {
+        scene_metrics = {
             "rmse": float(rmse_total),
             "psnr": float(psnr),
             "sam_deg": float(sam_val),
@@ -350,7 +363,26 @@ def compute_metrics(args):
             "cc": float(cc_val),
             "pseudo_gt": bool(args.pseudo_gt),
         }
+        out[f"scene_{idx+1}"] = scene_metrics
+        acc["rmse"].append(scene_metrics["rmse"])
+        acc["psnr"].append(scene_metrics["psnr"])
+        acc["sam_deg"].append(scene_metrics["sam_deg"])
+        acc["ergas"].append(scene_metrics["ergas"])
+        acc["mssim"].append(scene_metrics["mssim"])
+        acc["cc"].append(scene_metrics["cc"])
 
+    # Add averages across all processed scenes
+    if acc["rmse"]:
+        out["average"] = {
+            "rmse": float(np.mean(acc["rmse"])),
+            "psnr": float(np.mean(acc["psnr"])),
+            "sam_deg": float(np.mean(acc["sam_deg"])),
+            "ergas": float(np.mean(acc["ergas"])),
+            "mssim": float(np.mean(acc["mssim"])),
+            "cc": float(np.mean(acc["cc"])),
+            "pseudo_gt": bool(args.pseudo_gt),
+            "num_scenes": int(len(acc["rmse"]))
+        }
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "metrics.json"), "w") as f:
         json.dump(out, f, indent=2)
@@ -379,6 +411,7 @@ def build_arg_parser():
     pt.add_argument("--lr", type=float, default=1e-4)
     pt.add_argument("--num-filter", type=int, default=32)
     pt.add_argument("--save-dir", type=str, default="./_saved_models")
+    pt.add_argument("--resume-from", type=str, default="", help="Path to .keras model to resume training from")
     pt.add_argument("--list-scenes", action="store_true", help="List discovered training scenes and exit")
     pt.add_argument("--sampling", choices=["grid","random"], default="grid", help="Patch sampling strategy")
     pt.add_argument("--random-per-scene", type=int, default=0, help="Random patches per scene (sampling=random, 0=auto heuristic)")
