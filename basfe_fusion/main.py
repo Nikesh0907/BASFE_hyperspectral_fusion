@@ -221,9 +221,11 @@ def train(args):
         # Resumed model keeps its optimizer and schedule
         pass
 
-    if args.save_dir and not getattr(args, 'resume_from', None):
+    # Ensure save directory exists (needed for checkpoints even when resuming)
+    if args.save_dir:
         os.makedirs(args.save_dir, exist_ok=True)
-        model.save(os.path.join(args.save_dir, "model_untrained.keras"))
+        if not getattr(args, 'resume_from', None):
+            model.save(os.path.join(args.save_dir, "model_untrained.keras"))
 
     class EpochTiming(keras.callbacks.Callback):
         def on_epoch_begin(self, epoch, logs=None):
